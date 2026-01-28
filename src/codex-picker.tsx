@@ -1,39 +1,88 @@
-import { List, ActionPanel, Action, showToast, Toast, getPreferenceValues, closeMainWindow } from "@raycast/api";
+import { List, ActionPanel, Action, showToast, Toast, closeMainWindow } from "@raycast/api";
 import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { homedir } from "os";
+import { join } from "path";
 import { useState, useEffect } from "react";
 
-interface Preferences {
-  projectsFile: string;
+interface SessionIndex {
+  entries?: Array<{
+    projectPath?: string;
+    modified?: string;
+  }>;
 }
 
 interface Project {
   name: string;
   path: string;
+  modified?: string;
 }
 
-function loadProjects(filePath: string): Project[] {
-  const expandedPath = filePath.replace(/^~/, homedir());
+function loadProjects(): Project[] {
+  const projectsDir = join(homedir(), ".claude", "projects");
 
-  if (!existsSync(expandedPath)) {
+  if (!existsSync(projectsDir)) {
     return [];
   }
 
-  const content = readFileSync(expandedPath, "utf-8");
-  return content
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map((line) => {
-      const expandedLine = line.replace(/^~/, homedir());
-      const name = expandedLine.split("/").pop() || expandedLine;
-      return { name, path: expandedLine };
-    });
+  const projects: Project[] = [];
+  const seen = new Set<string>();
+
+  try {
+    const dirs = readdirSync(projectsDir, { withFileTypes: true });
+
+    for (const dir of dirs) {
+      if (!dir.isDirectory()) continue;
+
+      const indexPath = join(projectsDir, dir.name, "sessions-index.json");
+      if (!existsSync(indexPath)) continue;
+
+      try {
+        const content = readFileSync(indexPath, "utf-8");
+        const index: SessionIndex = JSON.parse(content);
+
+        if (index.entries && index.entries.length > 0) {
+          const entry = index.entries[0];
+          const projectPath = entry.projectPath;
+
+          if (projectPath && !seen.has(projectPath) && existsSync(projectPath)) {
+            seen.add(projectPath);
+            const name = projectPath.split("/").pop() || projectPath;
+
+            // Find the most recent modified date across all entries
+            let latestModified = entry.modified;
+            for (const e of index.entries) {
+              if (e.modified && (!latestModified || e.modified > latestModified)) {
+                latestModified = e.modified;
+              }
+            }
+
+            projects.push({
+              name,
+              path: projectPath,
+              modified: latestModified,
+            });
+          }
+        }
+      } catch {
+        // Skip invalid JSON files
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  // Sort by most recently modified
+  projects.sort((a, b) => {
+    if (!a.modified) return 1;
+    if (!b.modified) return -1;
+    return b.modified.localeCompare(a.modified);
+  });
+
+  return projects;
 }
 
 async function launchCodex(projectPath: string) {
-  // Close Raycast first
   await closeMainWindow();
 
   const script = `
@@ -64,22 +113,21 @@ async function launchCodex(projectPath: string) {
 }
 
 export default function Command() {
-  const preferences = getPreferenceValues<Preferences>();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const loaded = loadProjects(preferences.projectsFile);
+    const loaded = loadProjects();
     setProjects(loaded);
     setIsLoading(false);
-  }, [preferences.projectsFile]);
+  }, []);
 
   if (!isLoading && projects.length === 0) {
     return (
       <List>
         <List.EmptyView
           title="No projects found"
-          description={`Add project paths to ${preferences.projectsFile}`}
+          description="Use Claude Code in a project first"
         />
       </List>
     );

@@ -6,7 +6,9 @@ Raycast extension to quickly launch Claude Code or Codex in your project directo
 
 - **cc** - Pick a project and launch Claude Code
 - **cx** - Pick a project and launch Codex
-- Fuzzy search across all your projects
+- **Auto-detection** - Automatically lists projects where Claude Code has been used
+- **Smart filtering** - Deleted projects are automatically hidden
+- **Recent first** - Projects sorted by most recently used
 - Opens a new Ghostty tab with the selected project
 
 ## Installation
@@ -15,24 +17,18 @@ Raycast extension to quickly launch Claude Code or Codex in your project directo
 2. `npm install`
 3. Open Raycast → `Import Extension` → Select this folder
 
-## Setup
-
-Create `~/.claude_projects` with your project paths (one per line):
-
-```
-~/dev/project-a
-~/dev/project-b
-~/work/another-project
-```
-
-Lines starting with `#` are ignored.
-
 ## Usage
 
 1. Open Raycast
 2. Type `cc` (for Claude) or `cx` (for Codex)
 3. Search and select a project
 4. Press Enter
+
+No configuration needed. Projects are automatically detected from `~/.claude/projects/`.
+
+## How it works
+
+Claude Code stores session data in `~/.claude/projects/`. This extension reads the `sessions-index.json` files to get the list of projects you've used, filters out any that no longer exist, and sorts them by most recently used.
 
 ## Requirements
 

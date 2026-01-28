@@ -24,16 +24,6 @@
       "keywords": ["cx", "codex", "picker"]
     }
   ],
-  "preferences": [
-    {
-      "name": "projectsFile",
-      "title": "Projects File",
-      "description": "Path to file containing project directories (one per line)",
-      "type": "textfield",
-      "required": true,
-      "default": "~/.claude_projects"
-    }
-  ],
   "dependencies": {
     "@raycast/api": "^1.64.0"
   },
