@@ -28,7 +28,12 @@ No configuration needed. Projects are automatically detected from `~/.claude/pro
 
 ## How it works
 
-Claude Code stores session data in `~/.claude/projects/`. This extension reads the `sessions-index.json` files to get the list of projects you've used, filters out any that no longer exist, and sorts them by most recently used.
+Projects are discovered from two sources:
+
+1. **~/.claude/projects/** - Claude Code's session data (recent projects)
+2. **~/dev/**/CLAUDE.md** - Scans for CLAUDE.md files (catches older projects)
+
+Projects are deduplicated, filtered to only existing paths, and sorted by most recently used.
 
 ## Requirements
 

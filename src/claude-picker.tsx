@@ -1,6 +1,6 @@
 import { List, ActionPanel, Action, showToast, Toast, closeMainWindow } from "@raycast/api";
 import { execSync } from "child_process";
-import { readFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { useState, useEffect } from "react";
@@ -18,59 +18,138 @@ interface Project {
   modified?: string;
 }
 
-function loadProjects(): Project[] {
-  const projectsDir = join(homedir(), ".claude", "projects");
+function extractCwdFromJsonl(filePath: string): string | null {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const match = content.match(/"cwd":"([^"]+)"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 
-  if (!existsSync(projectsDir)) {
-    return [];
+// Scan directory for CLAUDE.md files (up to specified depth)
+function scanForClaudeMd(baseDir: string, seen: Set<string>, maxDepth: number = 3): Project[] {
+  const projects: Project[] = [];
+
+  function scan(dir: string, depth: number) {
+    if (depth > maxDepth) return;
+
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+
+      // Check if this directory has CLAUDE.md
+      const hasClaudeMd = entries.some((e) => e.isFile() && e.name === "CLAUDE.md");
+
+      if (hasClaudeMd && !seen.has(dir)) {
+        seen.add(dir);
+        const name = dir.split("/").pop() || dir;
+        const stat = statSync(join(dir, "CLAUDE.md"));
+
+        projects.push({
+          name,
+          path: dir,
+          modified: stat.mtime.toISOString(),
+        });
+      }
+
+      // Recurse into subdirectories
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+          scan(join(dir, entry.name), depth + 1);
+        }
+      }
+    } catch {
+      // Skip inaccessible directories
+    }
   }
 
+  if (existsSync(baseDir)) {
+    scan(baseDir, 1);
+  }
+
+  return projects;
+}
+
+function loadProjects(): Project[] {
+  const projectsDir = join(homedir(), ".claude", "projects");
   const projects: Project[] = [];
   const seen = new Set<string>();
 
-  try {
-    const dirs = readdirSync(projectsDir, { withFileTypes: true });
+  // 1. Load from ~/.claude/projects/
+  if (existsSync(projectsDir)) {
+    try {
+      const dirs = readdirSync(projectsDir, { withFileTypes: true });
 
-    for (const dir of dirs) {
-      if (!dir.isDirectory()) continue;
+      for (const dir of dirs) {
+        if (!dir.isDirectory()) continue;
 
-      const indexPath = join(projectsDir, dir.name, "sessions-index.json");
-      if (!existsSync(indexPath)) continue;
+        const dirPath = join(projectsDir, dir.name);
+        const indexPath = join(dirPath, "sessions-index.json");
 
-      try {
-        const content = readFileSync(indexPath, "utf-8");
-        const index: SessionIndex = JSON.parse(content);
+        let projectPath: string | null = null;
+        let latestModified: string | undefined;
 
-        if (index.entries && index.entries.length > 0) {
-          const entry = index.entries[0];
-          const projectPath = entry.projectPath;
+        // Try sessions-index.json first
+        if (existsSync(indexPath)) {
+          try {
+            const content = readFileSync(indexPath, "utf-8");
+            const index: SessionIndex = JSON.parse(content);
 
-          if (projectPath && !seen.has(projectPath) && existsSync(projectPath)) {
-            seen.add(projectPath);
-            const name = projectPath.split("/").pop() || projectPath;
+            if (index.entries && index.entries.length > 0) {
+              projectPath = index.entries[0].projectPath || null;
 
-            // Find the most recent modified date across all entries
-            let latestModified = entry.modified;
-            for (const e of index.entries) {
-              if (e.modified && (!latestModified || e.modified > latestModified)) {
-                latestModified = e.modified;
+              // Find the most recent modified date
+              for (const e of index.entries) {
+                if (e.modified && (!latestModified || e.modified > latestModified)) {
+                  latestModified = e.modified;
+                }
               }
             }
-
-            projects.push({
-              name,
-              path: projectPath,
-              modified: latestModified,
-            });
+          } catch {
+            // Fall through to jsonl fallback
           }
         }
-      } catch {
-        // Skip invalid JSON files
+
+        // Fallback: read from .jsonl files
+        if (!projectPath) {
+          try {
+            const files = readdirSync(dirPath);
+            const jsonlFile = files.find((f) => f.endsWith(".jsonl"));
+            if (jsonlFile) {
+              projectPath = extractCwdFromJsonl(join(dirPath, jsonlFile));
+
+              // Use file mtime as modified date
+              if (projectPath) {
+                const stat = statSync(join(dirPath, jsonlFile));
+                latestModified = stat.mtime.toISOString();
+              }
+            }
+          } catch {
+            // Skip
+          }
+        }
+
+        if (projectPath && !seen.has(projectPath) && existsSync(projectPath)) {
+          seen.add(projectPath);
+          const name = projectPath.split("/").pop() || projectPath;
+
+          projects.push({
+            name,
+            path: projectPath,
+            modified: latestModified,
+          });
+        }
       }
+    } catch {
+      // Continue to CLAUDE.md scan
     }
-  } catch {
-    return [];
   }
+
+  // 2. Scan ~/dev for CLAUDE.md files (catches old projects not in ~/.claude/projects/)
+  const devDir = join(homedir(), "dev");
+  const claudeMdProjects = scanForClaudeMd(devDir, seen);
+  projects.push(...claudeMdProjects);
 
   // Sort by most recently modified
   projects.sort((a, b) => {
